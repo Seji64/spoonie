@@ -12,6 +12,4 @@ python3 /app/spoonie.py --spotify-user "$SPOTIFY_USERNAME" --spotify-password "$
         --creative-tonie "$CREATIVE_TONIE" --playlist "$PLAYLIST" --data-path "$DATA_PATH"
 echo "############### Initial run completed! ###############"
 echo "############### Starting CRON ###############"
-touch /var/log/cron.log
-cron
-tail -f /var/log/cron.log
+cron -l 2 -f
