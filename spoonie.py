@@ -427,7 +427,7 @@ def main():
         for chapter in chapters:
             foundOnPlaylist = next((x for x in playlist_titles.keys() if x == chapter.title), None)
             if foundOnPlaylist is None:
-                logging.debug(f"Removing chapter '{chapter.title}' from creative tonie cause its not longer on the playlist")
+                logging.info(f"Removing chapter '{chapter.title}' from creative tonie cause its not longer on the playlist")
                 chapters.remove(chapter)
                 chapters_removed = True
         if chapters_removed:
