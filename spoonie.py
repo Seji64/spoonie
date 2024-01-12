@@ -363,6 +363,7 @@ def main():
             os.makedirs(download_root)
 
         playlist_titles = {}
+        playlist_song_lenghts = {}
 
         for song in playlist_songs:
             file_fullpath = ""
@@ -370,7 +371,7 @@ def main():
 
             try:
                 track_id = song['track']['id']
-                logging.info(f"Downloading {song['track']['name']} (Id: {track_id})")
+                logging.info(f"Processing {song['track']['name']} (Id: {track_id})")
                 (artists, raw_artists, album_name, name, image_url, release_year, disc_number,track_number, scraped_song_id, is_playable, duration_ms) = get_song_info(spotifySession,track_id)
                 
                 title = f"{artists[0]} - {name}"
@@ -379,6 +380,7 @@ def main():
                 file_fullpath = os.path.join(download_root,filename)
 
                 playlist_titles[clean_title] = file_fullpath
+                playlist_song_lenghts[clean_title] = (duration_ms / 1000)
 
                 if not os.path.isfile(file_fullpath):
                     if(is_playable):
@@ -433,17 +435,26 @@ def main():
         if chapters_removed:
             tonie_api.sort_chapter_of_tonie(creative_tonie,chapters)
 
-        logging.info("Uploading new songs / chapters...")
+        # Refresh tonie
+        creative_tonie = next((x for x in tonie_api.get_all_creative_tonies_by_household(household) if x.name == args.creative_tonie_name), None)
 
+        logging.info("Uploading new songs / chapters...")
+        tonie_seconds_remaining = creative_tonie.secondsRemaining
         for key, value in playlist_titles.items():
             foundOnCreativeTonie = next((x for x in chapters if x.title == key), None)
             if foundOnCreativeTonie is None:
-                logging.info(f"Uploading '{key}' to creative tonie...")
-                tonie_api.upload_file_to_tonie(creative_tonie,value,key)
-                logging.info("Upload complete!")
+                song_playtime = playlist_song_lenghts[key]
+                if tonie_seconds_remaining - song_playtime > 0:
+                  logging.info(f"Uploading '{key}' to  creative tonie...")
+                  tonie_api.upload_file_to_tonie(creative_tonie,value,key)
+                  tonie_seconds_remaining = tonie_seconds_remaining - song_playtime
+                  logging.info(f"Upload complete! => {tonie_seconds_remaining} free seconds remaining on creative tonie")
+                else:
+                  logging.warning(f" Skipping {key} => Not enough free space on creative tonie! Needed: {song_playtime}s | Free: {tonie_seconds_remaining}s")
             else:
-                logging.info(f"Skipping '{key}' => already present on creative tonie")
-
+                logging.info(f"Skipping '{key}' => already present on creative tonie")                
+        
+        # Refresh tonie
         creative_tonie = next((x for x in tonie_api.get_all_creative_tonies_by_household(household) if x.name == args.creative_tonie_name), None)
         chapters = creative_tonie.chapters
 
