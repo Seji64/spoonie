@@ -1,23 +1,7 @@
-annotated-types==0.6.0
-certifi==2023.11.17
-charset-normalizer==3.3.2
-defusedxml==0.7.1
-ffmpy==0.3.1
-idna==3.6
-ifaddr==0.2.0
-librespot @ git+https://github.com/kokarare1212/librespot-python@81ecec3b682e1bec5b3ee80342f8db6c15a84047
-music-tag==0.4.3
-mutagen==1.47.0
-oauthlib==3.2.2
-protobuf==3.20.1
-pycryptodomex==3.19.0
-pydantic==2.5.3
-pydantic_core==2.14.6
-PyOgg==0.6.14a1
-requests==2.31.0
-requests-oauthlib==1.3.1
-tonie-api==0.1.1
-typing_extensions==4.9.0
-urllib3==2.1.0
-websocket-client==1.7.0
-zeroconf==0.131.0
+ffmpy
+librespot @ git+https://github.com/kokarare1212/librespot-python@f28b51b6e6c8a1c6ec9bd1e100306c224b4eb4df
+music-tag
+Pillow
+protobuf
+tqdm
+tonie_api
