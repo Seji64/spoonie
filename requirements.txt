@@ -4,4 +4,4 @@ music-tag
 Pillow
 protobuf
 tqdm
-tonie_api
+tonie_api @ git+https://github.com/Seji64/tonie-api
