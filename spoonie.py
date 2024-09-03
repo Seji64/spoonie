@@ -38,6 +38,7 @@ parser.add_argument("-tu", "--tonie-username", dest="tonie_username", required=T
 parser.add_argument("-tp", "--tonie-password", dest="tonie_password", required=True, help="")
 parser.add_argument("-th", "--tonie-household", dest="tonie_household", required=True, help="Name of the 'meine Tonies' Haushalt")
 parser.add_argument("-ctn", "--creative-tonie", dest="creative_tonie_name", required=True, help="Name of the creative tonie")
+parser.add_argument("-tt", "--tonie-timeout", default=30,type=int, dest="tonie_timeout", required=False, help="Set timeout for tonieapi (which is quite slow sometimes)")
 parser.add_argument("-P", "--playlist", dest="playlist", required=True, help="Link of a Spotify playlist or a show/podcast")
 parser.add_argument("-d", "--data-path", dest="data_path", required=False, help="Defaults to ~/.local/share/spoonie")
 parser.add_argument("-b", "--ban-protection", action="store_true", dest="ban_protection", required=False, help="Ban protection")
@@ -399,7 +400,7 @@ def main():
             logging.info(f"Creating data folder {args.data_path}")
             os.makedirs(args.data_path)
 
-        tonie_api = TonieAPI(args.tonie_username, args.tonie_password)
+        tonie_api = TonieAPI(args.tonie_username, args.tonie_password, args.tonie_timeout)
         household = next((x for x in tonie_api.get_households() if x.name == args.tonie_household), None)
         if household is None:
             raise ValueError(f"Tonie Household '{args.tonie_household}' not found!")
