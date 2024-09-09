@@ -6,4 +6,4 @@ echo "############### Starting initial run... ###############"
         --creative-tonie "$CREATIVE_TONIE" --tonie-timeout $TONIE_TIMEOUT --playlist "$PLAYLIST" --data-path "$DATA_PATH"
 echo "############### Initial run completed! ###############"
 echo "############### Starting CRON ###############"
-/usr/local/bin/yacron -c /app/crontab.yaml
+/usr/bin/supercronic /app/crontab

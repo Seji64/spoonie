@@ -1,8 +1,0 @@
-jobs:
-  - name: Spoonie
-    command: |
-      python3 /app/spoonie.py --spotify-user "$SPOTIFY_USERNAME" --spotify-password "$SPOTIFY_PASSWORD" \
-        --tonie-username "$TONIE_USERNAME" --tonie-password "$TONIE_PASSWORD" --tonie-household "$TONIE_HOUSEHOLD" \
-        --creative-tonie "$CREATIVE_TONIE" --playlist "$PLAYLIST" --data-path "$DATA_PATH"
-    shell: /bin/bash
-    schedule: "*/15 * * * *"

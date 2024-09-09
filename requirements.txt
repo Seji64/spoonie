@@ -1,5 +1,5 @@
 ffmpy
-librespot @ git+https://github.com/kokarare1212/librespot-python@3b46fe560ad829b976ce63e85012cff95b1e0bf3
+librespot @ git+https://github.com/kokarare1212/librespot-python@f28b51b6e6c8a1c6ec9bd1e100306c224b4eb4df
 music-tag
 Pillow
 protobuf

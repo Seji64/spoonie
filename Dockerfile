@@ -1,4 +1,15 @@
-FROM python:3.12-slim
+FROM python:3.12-alpine as base
+
+RUN apk --update add ffmpeg
+
+FROM base AS builder
+
+WORKDIR /install
+COPY requirements.txt /requirements.txt
+RUN apk add python3 py3-pip gcc libc-dev zlib zlib-dev jpeg-dev git
+RUN pip install --prefix="/install" -r /requirements.txt
+
+FROM base
 LABEL org.opencontainers.image.authors="seji@tihoda.de"
 
 ENV SPOTIFY_USERNAME=
@@ -11,19 +22,16 @@ ENV DATA_PATH=/app/data
 ENV CREATIVE_TONIE=
 ENV PLAYLIST=
 
+COPY --from=builder /install /usr/local/lib/python3.12/site-packages
+RUN mv /usr/local/lib/python3.12/site-packages/lib/python3.12/site-packages/* /usr/local/lib/python3.12/site-packages/
+RUN apk --no-cache add tini bash supercronic
+
 WORKDIR /app
 COPY spoonie.py .
-COPY requirements.txt .
 COPY entrypoint.sh .
-COPY crontab.yaml .
+COPY crontab .
 
-RUN apt-get update && apt-get -y upgrade && \
-    apt-get --no-install-suggests --no-install-recommends -y install git tini ffmpeg lame curl zlib1g && \
-    curl -L "https://github.com/gjcarneiro/yacron/releases/download/0.19.0/yacron-0.19.0-x86_64-unknown-linux-gnu" --output /usr/local/bin/yacron && \
-    pip3 install --upgrade pip && \
-    pip3 install -r requirements.txt && \
-    chmod +x /app/entrypoint.sh && \
-    chmod +x /usr/local/bin/yacron
+RUN chmod +x /app/entrypoint.sh
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["/bin/bash", "/app/entrypoint.sh"]
