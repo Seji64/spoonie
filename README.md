@@ -14,6 +14,11 @@ pip3 install -r requirements.txt
 
 ## Usage
 
+### Authentication
+
+You must therefore create a `credentials.json` yourself. You can do this e.g. via https://gist.github.com/g42ftw/b61304497cb19564e89f50197cf4d730 or https://github.com/dspearson/librespot-auth.
+Then save the file under `app/data/credentials.json`.
+
 ### Local
 ```
 cd spoonie

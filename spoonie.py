@@ -32,8 +32,8 @@ usage = """
 """.format(sys.version, os.path.basename(__file__))
 
 parser = ArgumentParser(usage=usage)
-parser.add_argument("-su", "--spotify-username", dest="spotify_username", required=True, help="")
-parser.add_argument("-sp", "--spotify-password", dest="spotify_password", required=True, help="")
+parser.add_argument("-su", "--spotify-username", dest="spotify_username", required=False, help="", deprecated=True)
+parser.add_argument("-sp", "--spotify-password", dest="spotify_password", required=False, help="", deprecated=True)
 parser.add_argument("-tu", "--tonie-username", dest="tonie_username", required=True, help="")
 parser.add_argument("-tp", "--tonie-password", dest="tonie_password", required=True, help="")
 parser.add_argument("-th", "--tonie-household", dest="tonie_household", required=True, help="Name of the 'meine Tonies' Haushalt")
@@ -407,7 +407,7 @@ def main():
         creative_tonie = next((x for x in tonie_api.get_all_creative_tonies_by_household(household) if x.name == args.creative_tonie_name), None)
         if creative_tonie is None:
             raise ValueError(f"Creative Tonie '{args.creative_tonie_name}' not found!")
-        
+
         cred_location = get_credentials_location()
         if Path(cred_location).is_file():
             try:
@@ -416,14 +416,13 @@ def main():
             except RuntimeError:
                 pass
         else:
-            conf = Session.Configuration.Builder().set_stored_credential_file(cred_location).build()
-            spotifySession= Session.Builder(conf).user_pass(args.spotify_username, args.spotify_password).create()
+            raise ValueError("Username / Password auth is no longer supported! Please see docs how to create an `credentials.json`!")
 
         track_id, album_id, playlist_id, episode_id, show_id, artist_id = regex_input_for_urls(args.playlist)
 
         if playlist_id is None and show_id is None:
-            raise ValueError(f"Supplied playlist is neither a valid playlist or show")
-        
+            raise ValueError("Supplied playlist is neither a valid playlist or show")
+
         show_episodes = []
         playlist_songs = []
 
@@ -438,7 +437,7 @@ def main():
 
         if playlist_id is not None:
             playlist_songs = get_playlist_songs(spotifySession,playlist_id)
-        
+
         if show_id is not None:
             show_episodes = get_show_episodes(spotifySession,show_id)
 
@@ -466,9 +465,9 @@ def main():
                         filename = f"{clean_title}.mp3"
                         file_fullpath = os.path.join(download_root,filename)
 
-                        if not os.path.isfile(file_fullpath):            
+                        if not os.path.isfile(file_fullpath):
                             if(is_playable):
-                                track = TrackId.from_base62(track_id) 
+                                track = TrackId.from_base62(track_id)
                                 downloadSpotifyTrack(spotifySession,clean_title,track,duration_ms,download_tempfile,file_fullpath)
                                 logging.info("Finalizing file...")
                                 convert_audio_format(download_tempfile.name,file_fullpath)
@@ -501,7 +500,7 @@ def main():
             logging.info("Playlist download completed!")
 
         if (show_episodes is not None):
-            
+
             for episode in show_episodes:
 
                 file_fullpath = ""
@@ -524,7 +523,7 @@ def main():
                     filename = f"{clean_title}.mp3"
                     file_fullpath = os.path.join(download_root,filename)
 
-                    if not os.path.isfile(file_fullpath):           
+                    if not os.path.isfile(file_fullpath):
                         if "anon-podcast.scdn.co" in direct_download_url or "audio_preview_url" not in resp:
                             track = EpisodeId.from_base62(episode)
                             downloadSpotifyTrack(spotifySession,clean_title,track,duration_ms,download_tempfile,file_fullpath)
@@ -583,8 +582,8 @@ def main():
                 else:
                   logging.warning(f" Skipping {key} => Not enough free space on creative tonie! Needed: {song_playtime}s | Free: {tonie_seconds_remaining}s")
             else:
-                logging.info(f"Skipping '{key}' => already present on creative tonie")                
-        
+                logging.info(f"Skipping '{key}' => already present on creative tonie")
+
         # Refresh tonie
         creative_tonie = next((x for x in tonie_api.get_all_creative_tonies_by_household(household) if x.name == args.creative_tonie_name), None)
         chapters = creative_tonie.chapters
