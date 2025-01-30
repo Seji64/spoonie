@@ -22,8 +22,8 @@ ENV DATA_PATH=/app/data
 ENV CREATIVE_TONIE=
 ENV PLAYLIST=
 
-COPY --from=builder /install /usr/local/lib/python3.12/site-packages
-RUN mv /usr/local/lib/python3.12/site-packages/lib/python3.12/site-packages/* /usr/local/lib/python3.12/site-packages/
+COPY --from=builder /install /usr/local/lib/python3.13/site-packages
+RUN mv /usr/local/lib/python3.13/site-packages/lib/python3.13/site-packages/* /usr/local/lib/python3.13/site-packages/
 RUN apk --no-cache add tini bash supercronic
 
 WORKDIR /app
