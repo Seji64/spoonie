@@ -390,6 +390,9 @@ def downloadSpotifyTrack(spotifySession, name, track, track_duration_ms, downloa
     time_downloaded = time.time()
     logging.info(f"Downloaded '{name}' in {fmt_seconds(time_downloaded - time_start)} seconds!")
 
+def trim_to_128(s: str) -> str:
+    return s[:128]
+
 def main():
 
     try:
@@ -461,7 +464,7 @@ def main():
                         (artists, raw_artists, album_name, name, image_url, release_year, disc_number,track_number, scraped_song_id, is_playable, duration_ms) = get_song_info(spotifySession,track_id)
 
                         title = f"{artists[0]} - {name}"
-                        clean_title = fix_filename(title)
+                        clean_title = trim_to_128(fix_filename(title))
                         filename = f"{clean_title}.mp3"
                         file_fullpath = os.path.join(download_root,filename)
 
@@ -519,7 +522,7 @@ def main():
                         logging.warning("No direct download url found")
                         direct_download_url = ""
 
-                    clean_title = fix_filename(title)
+                    clean_title = trim_to_128(fix_filename(title))
                     filename = f"{clean_title}.mp3"
                     file_fullpath = os.path.join(download_root,filename)
 
