@@ -121,6 +121,8 @@ def get_song_info(spotifySession, song_id) -> tuple[list[str], str, str, Optiona
 def get_show_episodes(spotifySession, show_id_str) -> list[str]:
     """ returns the ids of all episodes of a show """
     show = spotifySession.api().get_metadata_4_show(ShowId.from_base62(show_id_str))
+    if not show.episode:
+        raise ValueError(f"Spotify returned no episodes for show '{show.name}' (Id: {show_id_str})")
     return [EpisodeId.from_hex(episode.gid.hex()).id() for episode in show.episode]
 
 def get_playlist_items(spotifySession, playlist_id) -> list[str]:
@@ -304,6 +306,7 @@ def main():
 
         download_titles = {}
         download_title_lenghts = {}
+        failed_items = 0
 
         if playlist_id is not None:
             for item_uri in get_playlist_items(spotifySession,playlist_id):
@@ -363,6 +366,7 @@ def main():
                         download_title_lenghts[clean_title] = (duration_ms / 1000)
 
                 except Exception as ex:
+                    failed_items += 1
                     logging.error(f"Failed to download song with Id {track_id}")
                     logging.critical(ex, exc_info=True)
                 finally:
@@ -408,6 +412,7 @@ def main():
                         download_title_lenghts[clean_title] = (duration_ms / 1000)
 
                 except Exception as ex:
+                    failed_items += 1
                     logging.error(f"Failed to download episode with id {episode}")
                     logging.critical(ex, exc_info=True)
                 finally:
@@ -415,6 +420,10 @@ def main():
                     if os.path.exists(download_tempfile.name):
                         os.unlink(download_tempfile.name)
             logging.info("Show download completed!")
+
+        # Don't wipe the creative tonie if spotify failed for every item (e.g. API changes)
+        if failed_items > 0 and not download_titles:
+            raise ValueError(f"Failed to process all {failed_items} playlist / show items => leaving creative tonie untouched")
 
         logging.info("Removing orphaned chapters from creative tonie...")
         chapters_removed = False
