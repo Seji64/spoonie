@@ -1,7 +1,7 @@
 ffmpy
-librespot @ git+https://github.com/kokarare1212/librespot-python@8760279c64230607d418d72b028e8f9b8ba7525e
+librespot @ git+https://github.com/Googolplexed0/librespot-python@01abfc8ad012dbc40e90417e640faaf271ea2f98
 music-tag
 Pillow
 protobuf
-tqdm
+requests
 tonie_api
