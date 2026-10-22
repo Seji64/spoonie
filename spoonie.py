@@ -23,18 +23,7 @@ from tonie_api.models import Config, CreativeTonie, User
 from argparse import ArgumentParser
 
 IMAGE_URL_PREFIX = 'https://i.scdn.co/image/'
-OAUTH_SCOPES = [
-    'streaming',
-    'playlist-read-private',
-    'playlist-read-collaborative',
-    'user-follow-read',
-    'user-read-playback-position',
-    'user-top-read',
-    'user-read-recently-played',
-    'user-library-read',
-    'user-read-email',
-    'user-read-private'
-]
+OAUTH_REDIRECT_URL = 'http://127.0.0.1:4381/login'
 
 usage = """
 """.format(sys.version, os.path.basename(__file__))
@@ -50,7 +39,6 @@ parser.add_argument("-tt", "--tonie-timeout", default=30,type=int, dest="tonie_t
 parser.add_argument("-P", "--playlist", dest="playlist", required=True, help="Link of a Spotify playlist or a show/podcast")
 parser.add_argument("-d", "--data-path", dest="data_path", required=False, help="Defaults to ~/.local/share/spoonie")
 parser.add_argument("-b", "--ban-protection", action="store_true", dest="ban_protection", required=False, help="Ban protection")
-parser.add_argument("-op", "--oauth-port", default=4381, type=int, dest="oauth_port", required=False, help="Port of the local callback server for the spotify OAuth login (redirect to http://127.0.0.1:<port>/login)")
 
 args = parser.parse_args()
 
@@ -94,12 +82,7 @@ def get_cover_url(image_group) -> Optional[str]:
 def get_episode_info(spotifySession, episode_id_str) -> tuple[str, int, str]:
     """ Retrieves metadata for podcast episodes """
     episode = spotifySession.api().get_metadata_4_episode(EpisodeId.from_base62(episode_id_str))
-
-    show_name = episode.show.name
-    if not show_name and episode.show.gid:
-        show_name = spotifySession.api().get_metadata_4_show(ShowId.from_hex(episode.show.gid.hex())).name
-
-    return fix_filename(show_name), episode.duration, fix_filename(episode.name)
+    return fix_filename(episode.show.name), episode.duration, fix_filename(episode.name)
 
 def get_song_info(spotifySession, song_id) -> tuple[list[str], str, str, Optional[str], Optional[int], int, int, bool, int]:
     """ Retrieves metadata for downloaded songs """
@@ -144,31 +127,29 @@ def save_credentials(spotifySession) -> None:
     os.replace(f"{cred_location}.tmp", cred_location)
 
 def spotify_oauth_login(conf) -> Session:
-    redirect_url = f"http://127.0.0.1:{args.oauth_port}/login"
-
     def print_login_url(url):
-        logging.warning("No valid spotify credentials found => Please login to spotify:")
+        logging.warning(f"No spotify credentials found ({get_credentials_location()}) => Please login to spotify:")
         logging.warning(f"1. Open the following link in your browser and login: {url}")
-        logging.warning(f"2. Spotify then redirects your browser to {redirect_url}?code=... - spoonie is waiting for this request on port {args.oauth_port}.")
+        logging.warning(f"2. Spotify then redirects your browser to {OAUTH_REDIRECT_URL}?code=... - spoonie is waiting for this request.")
         logging.warning("   If the page can't be loaded (e.g. spoonie runs on another machine), copy the url from your browser and open it on the machine spoonie runs on, e.g. with curl.")
 
-    oauth = OAuth(MercuryRequests.keymaster_client_id, redirect_url, print_login_url).set_scopes(OAUTH_SCOPES).set_listen_all(True)
+    # listen on all interfaces, so the callback also reaches spoonie inside docker
+    oauth = OAuth(MercuryRequests.keymaster_client_id, OAUTH_REDIRECT_URL, print_login_url).set_listen_all(True)
     builder = Session.Builder(conf)
     builder.login_credentials = oauth.flow()
     return builder.create()
 
 def spotify_login() -> Session:
     conf = Session.Configuration.Builder().set_store_credentials(False).build()
-    spotifySession = None
 
+    # No OAuth fallback if stored credentials fail: a network error would otherwise block every cron run waiting for a login
     cred_location = get_credentials_location()
     if Path(cred_location).is_file():
         try:
             spotifySession = Session.Builder(conf).stored_file(cred_location).create()
         except Exception as ex:
-            logging.warning(f"Spotify login with stored credentials '{cred_location}' failed ({ex}) => falling back to OAuth login")
-
-    if spotifySession is None:
+            raise RuntimeError(f"Spotify login with '{cred_location}' failed. If the credentials are no longer valid, delete this file to login again.") from ex
+    else:
         spotifySession = spotify_oauth_login(conf)
 
     save_credentials(spotifySession)

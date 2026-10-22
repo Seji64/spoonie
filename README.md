@@ -18,13 +18,13 @@ pip3 install -r requirements.txt
 
 Spotify no longer supports the login with username / password. Instead spoonie uses the OAuth login (like [Zotify](https://github.com/Googolplexed0/zotify)):
 
-1. On the first start (or if the stored credentials are no longer valid) spoonie logs a link and waits for the login.
+1. If there is no `credentials.json` in the data path, spoonie logs a link and waits for the login.
 2. Open the link in your browser and login to spotify.
 3. Spotify redirects your browser to `http://127.0.0.1:4381/login?code=...`. Spoonie receives this request, completes the login and stores the credentials as `credentials.json` in the data path (Docker: `/app/data/credentials.json`). Further runs use the stored credentials.
 
 If spoonie runs on another machine (e.g. a server), the redirect page can't be loaded in your browser. In this case copy the complete url from the address bar of your browser and open it on the machine spoonie runs on, e.g. `curl "http://127.0.0.1:4381/login?code=..."`.
 
-The callback port can be changed with `--oauth-port` (Docker: `SPOTIFY_OAUTH_PORT`). An existing `credentials.json` (e.g. created via https://github.com/dspearson/librespot-auth) still works.
+If the stored credentials are no longer valid, delete `credentials.json` and restart spoonie to login again. An existing `credentials.json` (e.g. created via https://github.com/dspearson/librespot-auth) still works.
 
 ### Local
 ```

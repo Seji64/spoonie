@@ -12,7 +12,6 @@ RUN pip install --prefix="/install" -r /requirements.txt
 FROM base
 LABEL org.opencontainers.image.authors="seji@tihoda.de"
 
-ENV SPOTIFY_OAUTH_PORT=4381
 ENV TONIE_USERNAME=
 ENV TONIE_PASSWORD=
 ENV TONIE_HOUSEHOLD=
