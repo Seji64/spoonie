@@ -12,28 +12,25 @@ import music_tag
 import tempfile
 import ffmpy
 
-from typing import Optional, Tuple
+from typing import Optional
 from pathlib import Path
-from librespot.audio.decoders import VorbisOnlyAudioQuality
-from librespot.metadata import TrackId,EpisodeId
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
-from librespot.core import Session
+from librespot.core import Session, OAuth, MercuryRequests
+from librespot.metadata import TrackId, EpisodeId, PlaylistId, ShowId
 from tonie_api.api import TonieAPI
 from tonie_api.models import Config, CreativeTonie, User
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, BooleanOptionalAction
 
-PLAYLISTS_URL = 'https://api.spotify.com/v1/playlists'
-TRACKS_URL = 'https://api.spotify.com/v1/tracks'
-EPISODE_INFO_URL = 'https://api.spotify.com/v1/episodes'
-SHOWS_URL = 'https://api.spotify.com/v1/shows'
+IMAGE_URL_PREFIX = 'https://i.scdn.co/image/'
+OAUTH_REDIRECT_URL = 'http://127.0.0.1:4381/login'
 
 usage = """
 """.format(sys.version, os.path.basename(__file__))
 
 parser = ArgumentParser(usage=usage)
-parser.add_argument("-su", "--spotify-username", dest="spotify_username", required=False, help="", deprecated=True)
-parser.add_argument("-sp", "--spotify-password", dest="spotify_password", required=False, help="", deprecated=True)
+parser.add_argument("-su", "--spotify-username", dest="spotify_username", required=False, help="No longer used, see README how to login to spotify", deprecated=True)
+parser.add_argument("-sp", "--spotify-password", dest="spotify_password", required=False, help="No longer used, see README how to login to spotify", deprecated=True)
 parser.add_argument("-tu", "--tonie-username", dest="tonie_username", required=True, help="")
 parser.add_argument("-tp", "--tonie-password", dest="tonie_password", required=True, help="")
 parser.add_argument("-th", "--tonie-household", dest="tonie_household", required=True, help="Name of the 'meine Tonies' Haushalt")
@@ -41,7 +38,7 @@ parser.add_argument("-ctn", "--creative-tonie", dest="creative_tonie_name", requ
 parser.add_argument("-tt", "--tonie-timeout", default=30,type=int, dest="tonie_timeout", required=False, help="Set timeout for tonieapi (which is quite slow sometimes)")
 parser.add_argument("-P", "--playlist", dest="playlist", required=True, help="Link of a Spotify playlist or a show/podcast")
 parser.add_argument("-d", "--data-path", dest="data_path", required=False, help="Defaults to ~/.local/share/spoonie")
-parser.add_argument("-b", "--ban-protection", action="store_true", dest="ban_protection", required=False, help="Ban protection")
+parser.add_argument("-b", "--ban-protection", action=BooleanOptionalAction, default=True, dest="ban_protection", required=False, help="Throttle downloads to avoid spotify rate limits (audio key errors)")
 
 args = parser.parse_args()
 
@@ -65,214 +62,99 @@ def fix_filename(name):
     """
     return re.sub(r'[/\\:|<>"?*\0-\x1f]|^(AUX|COM[1-9]|CON|LPT[1-9]|NUL|PRN)(?![^.])|^\s|[\s.]$', "_", str(name), flags=re.IGNORECASE)
 
-def regex_input_for_urls(search_input) -> tuple[str, str, str, str, str, str]:
-    """ Since many kinds of search may be passed at the command line, process them all here. """
-    track_uri_search = re.search(
-        r'^spotify:track:(?P<TrackID>[0-9a-zA-Z]{22})$', search_input)
-    track_url_search = re.search(
-        r'^(https?://)?open\.spotify\.com/track/(?P<TrackID>[0-9a-zA-Z]{22})(\?si=.+?)?$',
-        search_input,
-    )
+def regex_input_for_urls(search_input) -> tuple[Optional[str], Optional[str]]:
+    """ Extracts the playlist / show id from a spotify url or uri (e.g. open.spotify.com/intl-de/playlist/<id>?si=... or spotify:show:<id>) """
+    playlist_search = re.search(r'playlist[:/](?P<PlaylistID>[0-9a-zA-Z]{22})', search_input)
+    show_search = re.search(r'show[:/](?P<ShowID>[0-9a-zA-Z]{22})', search_input)
 
-    album_uri_search = re.search(
-        r'^spotify:album:(?P<AlbumID>[0-9a-zA-Z]{22})$', search_input)
-    album_url_search = re.search(
-        r'^(https?://)?open\.spotify\.com/album/(?P<AlbumID>[0-9a-zA-Z]{22})(\?si=.+?)?$',
-        search_input,
-    )
+    playlist_id_str = playlist_search.group('PlaylistID') if playlist_search is not None else None
+    show_id_str = show_search.group('ShowID') if show_search is not None else None
 
-    playlist_uri_search = re.search(
-        r'^spotify:playlist:(?P<PlaylistID>[0-9a-zA-Z]{22})$', search_input)
-    playlist_url_search = re.search(
-        r'^(https?://)?open\.spotify\.com/playlist/(?P<PlaylistID>[0-9a-zA-Z]{22})(\?si=.+?)?$',
-        search_input,
-    )
+    return playlist_id_str, show_id_str
 
-    episode_uri_search = re.search(
-        r'^spotify:episode:(?P<EpisodeID>[0-9a-zA-Z]{22})$', search_input)
-    episode_url_search = re.search(
-        r'^(https?://)?open\.spotify\.com/episode/(?P<EpisodeID>[0-9a-zA-Z]{22})(\?si=.+?)?$',
-        search_input,
-    )
+def get_cover_url(image_group) -> Optional[str]:
+    """ Returns the url of the largest image of an ImageGroup """
+    if not image_group.image:
+        return None
+    image = max(image_group.image, key=lambda i: (i.width, i.size))
+    return IMAGE_URL_PREFIX + image.file_id.hex()
 
-    show_uri_search = re.search(
-        r'^spotify:show:(?P<ShowID>[0-9a-zA-Z]{22})$', search_input)
-    show_url_search = re.search(
-        r'^(https?://)?open\.spotify\.com/show/(?P<ShowID>[0-9a-zA-Z]{22})(\?si=.+?)?$',
-        search_input,
-    )
+def get_episode_info(spotifySession, episode_id_str) -> tuple[str, int, str]:
+    """ Retrieves metadata for podcast episodes """
+    episode = spotifySession.api().get_metadata_4_episode(EpisodeId.from_base62(episode_id_str))
+    return fix_filename(episode.show.name), episode.duration, fix_filename(episode.name)
 
-    artist_uri_search = re.search(
-        r'^spotify:artist:(?P<ArtistID>[0-9a-zA-Z]{22})$', search_input)
-    artist_url_search = re.search(
-        r'^(https?://)?open\.spotify\.com/artist/(?P<ArtistID>[0-9a-zA-Z]{22})(\?si=.+?)?$',
-        search_input,
-    )
-
-    if track_uri_search is not None or track_url_search is not None:
-        track_id_str = (track_uri_search
-                        if track_uri_search is not None else
-                        track_url_search).group('TrackID')
-    else:
-        track_id_str = None
-
-    if album_uri_search is not None or album_url_search is not None:
-        album_id_str = (album_uri_search
-                        if album_uri_search is not None else
-                        album_url_search).group('AlbumID')
-    else:
-        album_id_str = None
-
-    if playlist_uri_search is not None or playlist_url_search is not None:
-        playlist_id_str = (playlist_uri_search
-                           if playlist_uri_search is not None else
-                           playlist_url_search).group('PlaylistID')
-    else:
-        playlist_id_str = None
-
-    if episode_uri_search is not None or episode_url_search is not None:
-        episode_id_str = (episode_uri_search
-                          if episode_uri_search is not None else
-                          episode_url_search).group('EpisodeID')
-    else:
-        episode_id_str = None
-
-    if show_uri_search is not None or show_url_search is not None:
-        show_id_str = (show_uri_search
-                       if show_uri_search is not None else
-                       show_url_search).group('ShowID')
-    else:
-        show_id_str = None
-
-    if artist_uri_search is not None or artist_url_search is not None:
-        artist_id_str = (artist_uri_search
-                         if artist_uri_search is not None else
-                         artist_url_search).group('ArtistID')
-    else:
-        artist_id_str = None
-
-    return track_id_str, album_id_str, playlist_id_str, episode_id_str, show_id_str, artist_id_str
-
-def get_episode_info(spotifySession,episode_id_str) -> Tuple[Optional[str], Optional[str]]:
-
-    (raw, info) = invoke_url(spotifySession,f'{EPISODE_INFO_URL}/{episode_id_str}')
-
-    if not info:
-        raise ValueError(f'Invalid response from EPISODE_INFO_URL:\n{raw}')
-    try:
-        duration_ms = info['duration_ms']
-        return fix_filename(info['show']['name']), duration_ms, fix_filename(info['name'])
-    except Exception as e:
-        raise ValueError(f'Failed to parse EPISODE_INFO_URL response: {str(e)}\n{raw}')
-
-def get_song_info(spotifySession,song_id) -> tuple[list[str], list[any], str, str, any, any, any, any, any, any, int]:
+def get_song_info(spotifySession, song_id) -> tuple[list[str], str, str, Optional[str], Optional[int], int, int, bool, int]:
     """ Retrieves metadata for downloaded songs """
+    track = spotifySession.api().get_metadata_4_track(TrackId.from_base62(song_id))
 
-    (raw, info) = invoke_url(spotifySession,f'{TRACKS_URL}?ids={song_id}&market=from_token')
-    if not 'tracks' in info:
-        raise ValueError(f'Invalid response from TRACKS_URL:\n{raw}')
+    artists = [artist.name for artist in track.artist]
+    album_name = track.album.name
+    name = track.name
+    release_year = track.album.date.year or None
+    disc_number = track.disc_number
+    track_number = track.number
+    # same check as librespot uses to pick a playable (alternative) version of the track
+    is_playable = len(track.file) > 0 or any(len(alternative.file) > 0 for alternative in track.alternative)
+    duration_ms = track.duration
+    image_url = get_cover_url(track.album.cover_group)
 
-    try:
-        artists = []
-        for data in info['tracks'][0]['artists']:
-            artists.append(data['name'])
+    return artists, album_name, name, image_url, release_year, disc_number, track_number, is_playable, duration_ms
 
-        album_name = info['tracks'][0]['album']['name']
-        name = info['tracks'][0]['name']
-        release_year = info['tracks'][0]['album']['release_date'].split('-')[0]
-        disc_number = info['tracks'][0]['disc_number']
-        track_number = info['tracks'][0]['track_number']
-        scraped_song_id = info['tracks'][0]['id']
-        is_playable = info['tracks'][0]['is_playable']
-        duration_ms = info['tracks'][0]['duration_ms']
+def get_show_episodes(spotifySession, show_id_str) -> list[str]:
+    """ returns the ids of all episodes of a show """
+    show = spotifySession.api().get_metadata_4_show(ShowId.from_base62(show_id_str))
+    if not show.episode:
+        raise ValueError(f"Spotify returned no episodes for show '{show.name}' (Id: {show_id_str})")
+    return [EpisodeId.from_hex(episode.gid.hex()).id() for episode in show.episode]
 
-        image = info['tracks'][0]['album']['images'][0]
-        for i in info['tracks'][0]['album']['images']:
-            if i['width'] > image['width']:
-                image = i
-        image_url = image['url']
-
-        return artists, info['tracks'][0]['artists'], album_name, name, image_url, release_year, disc_number, track_number, scraped_song_id, is_playable, duration_ms
-    except Exception as e:
-        raise ValueError(f'Failed to parse TRACKS_URL response: {str(e)}\n{raw}')
-
-def get_show_episodes(spotifySession, show_id_str) -> list:
-    episodes = []
-    offset = 0
-    limit = 50
-
-    while True:
-        resp = invoke_url_with_params(spotifySession,f'{SHOWS_URL}/{show_id_str}/episodes', limit=limit, offset=offset)
-        offset += limit
-        for episode in resp['items']:
-            episodes.append(episode['id'])
-        if len(resp['items']) < limit:
-            break
-
-    return episodes
-
-def get_playlist_songs(spotifySession,playlist_id):
-    """ returns list of songs in a playlist """
-    songs = []
-    offset = 0
-    limit = 100
-
-    while True:
-        resp = invoke_url_with_params(spotifySession,f'{PLAYLISTS_URL}/{playlist_id}/tracks', limit=limit, offset=offset)
-        offset += limit
-        songs.extend(resp['items'])
-        if len(resp['items']) < limit:
-            break
-
-    return songs
-
-def invoke_url(spotifySession, url, tryCount=0):
-        headers = get_auth_header(spotifySession)
-        response = requests.get(url, headers=headers)
-        responsetext = response.text
-        try:
-            responsejson = response.json()
-        except json.decoder.JSONDecodeError:
-            responsejson = {"error": {"status": "unknown", "message": "received an empty response"}}
-
-        if not responsejson or 'error' in responsejson:
-            if tryCount < (3 - 1):
-                logging.warning(f"Spotify API Error (try {tryCount + 1}) ({responsejson['error']['status']}): {responsejson['error']['message']}")
-                time.sleep(5)
-                return invoke_url(spotifySession,url, tryCount + 1)
-
-            logging.error(f"Spotify API Error ({responsejson['error']['status']}): {responsejson['error']['message']}")
-
-        return responsetext, responsejson
-
-def invoke_url_with_params(spotifySession,url, limit, offset, **kwargs):
-        headers, params = get_auth_header_and_params(spotifySession,limit=limit, offset=offset)
-        params.update(kwargs)
-        return requests.get(url, headers=headers, params=params).json()
-
-def get_auth_token(spotifySession):
-        return spotifySession.tokens().get_token(
-            "user-read-email", "playlist-read-private", "user-library-read", "user-follow-read"
-        ).access_token
+def get_playlist_items(spotifySession, playlist_id) -> list[str]:
+    """ returns the uris of all items (tracks / episodes) in a playlist """
+    playlist = spotifySession.api().get_playlist(PlaylistId.from_base62(playlist_id))
+    items = [item.uri for item in playlist.contents.items]
+    if playlist.contents.truncated:
+        logging.warning(f"Spotify returned only the first {len(items)} of {playlist.length} playlist items => the remaining items are ignored")
+    return items
 
 def get_credentials_location():
     return os.path.join(args.data_path,"credentials.json")
 
-def get_auth_header(spotifySession):
-    return {
-        'Authorization': f'Bearer {get_auth_token(spotifySession)}',
-        'Accept-Language': 'en',
-        'Accept': 'application/json',
-        'app-platform': 'WebPlayer'
-    }
+def save_credentials(spotifySession) -> None:
+    """ Stores the reusable credentials of the session, so further runs don't need an OAuth login """
+    cred_location = get_credentials_location()
+    with open(f"{cred_location}.tmp", "w") as f:
+        json.dump(spotifySession.credentials(), f)
+    os.replace(f"{cred_location}.tmp", cred_location)
 
-def get_auth_header_and_params(spotifySession,limit, offset):
-        return {
-            'Authorization': f'Bearer {get_auth_token(spotifySession)}',
-            'Accept-Language': 'en',
-            'Accept': 'application/json',
-            'app-platform': 'WebPlayer'
-        }, {'limit': limit, 'offset': offset}
+def spotify_oauth_login(conf) -> Session:
+    def print_login_url(url):
+        logging.warning(f"No spotify credentials found ({get_credentials_location()}) => Please login to spotify:")
+        logging.warning(f"1. Open the following link in your browser and login: {url}")
+        logging.warning(f"2. Spotify then redirects your browser to {OAUTH_REDIRECT_URL}?code=... - spoonie is waiting for this request.")
+        logging.warning("   If the page can't be loaded (e.g. spoonie runs on another machine), copy the url from your browser and open it on the machine spoonie runs on, e.g. with curl.")
+
+    # listen on all interfaces, so the callback also reaches spoonie inside docker
+    oauth = OAuth(MercuryRequests.keymaster_client_id, OAUTH_REDIRECT_URL, print_login_url).set_listen_all(True)
+    builder = Session.Builder(conf)
+    builder.login_credentials = oauth.flow()
+    return builder.create()
+
+def spotify_login() -> Session:
+    conf = Session.Configuration.Builder().set_store_credentials(False).build()
+
+    # No OAuth fallback if stored credentials fail: a network error would otherwise block every cron run waiting for a login
+    cred_location = get_credentials_location()
+    if Path(cred_location).is_file():
+        try:
+            spotifySession = Session.Builder(conf).stored_file(cred_location).create()
+        except Exception as ex:
+            raise RuntimeError(f"Spotify login with '{cred_location}' failed. If the credentials are no longer valid, delete this file to login again.") from ex
+    else:
+        spotifySession = spotify_oauth_login(conf)
+
+    save_credentials(spotifySession)
+    logging.info(f"Logged in to spotify as '{spotifySession.username()}'")
+    return spotifySession
 
 def fmt_seconds(secs: float) -> str:
     val = math.floor(secs)
@@ -346,31 +228,6 @@ def convert_audio_format(temp_filename,filename) -> None:
     except ffmpy.FFExecutableNotFoundError:
         logging.warning(f"Skipping {file_codec.upper()} conversion - ffmpeg not found!")
 
-def download_podcast_directly(url, filename):
-    import functools
-    import shutil
-    import requests
-    from tqdm.auto import tqdm
-
-    r = requests.get(url, stream=True, allow_redirects=True)
-    if r.status_code != 200:
-        r.raise_for_status()  # Will only raise for 4xx codes, so...
-        raise RuntimeError(
-            f"Request to {url} returned status code {r.status_code}")
-    file_size = int(r.headers.get('Content-Length', 0))
-
-    path = Path(filename).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    desc = "(Unknown total file size)" if file_size == 0 else ""
-    r.raw.read = functools.partial(
-        r.raw.read, decode_content=True)  # Decompress if needed
-    with tqdm.wrapattr(r.raw, "read", total=file_size, desc=desc) as r_raw:
-        with path.open("wb") as f:
-            shutil.copyfileobj(r_raw, f)
-
-    return path
-
 def downloadSpotifyTrack(spotifySession, name, track, track_duration_ms, download_tempfile, file_fullpath):
     stream = get_content_stream(spotifySession,track, AudioQuality.HIGH)
     total_size = stream.input_stream.size
@@ -403,25 +260,9 @@ def main():
             logging.info(f"Creating data folder {args.data_path}")
             os.makedirs(args.data_path)
 
-        tonie_api = TonieAPI(args.tonie_username, args.tonie_password, args.tonie_timeout)
-        household = next((x for x in tonie_api.get_households() if x.name == args.tonie_household), None)
-        if household is None:
-            raise ValueError(f"Tonie Household '{args.tonie_household}' not found!")
-        creative_tonie = next((x for x in tonie_api.get_all_creative_tonies_by_household(household) if x.name == args.creative_tonie_name), None)
-        if creative_tonie is None:
-            raise ValueError(f"Creative Tonie '{args.creative_tonie_name}' not found!")
+        spotifySession = spotify_login()
 
-        cred_location = get_credentials_location()
-        if Path(cred_location).is_file():
-            try:
-                conf = Session.Configuration.Builder().set_store_credentials(False).build()
-                spotifySession = Session.Builder(conf).stored_file(cred_location).create()
-            except RuntimeError:
-                pass
-        else:
-            raise ValueError("Username / Password auth is no longer supported! Please see docs how to create an `credentials.json`!")
-
-        track_id, album_id, playlist_id, episode_id, show_id, artist_id = regex_input_for_urls(args.playlist)
+        playlist_id, show_id = regex_input_for_urls(args.playlist)
 
         if playlist_id is None and show_id is None:
             raise ValueError("Supplied playlist is neither a valid playlist or show")
@@ -437,64 +278,68 @@ def main():
 
         download_titles = {}
         download_title_lenghts = {}
+        failed_items = 0
 
         if playlist_id is not None:
-            playlist_songs = get_playlist_songs(spotifySession,playlist_id)
+            for item_uri in get_playlist_items(spotifySession,playlist_id):
+                item_type, item_id = item_uri.split(":")[1:3]
+                if item_type == "track":
+                    playlist_songs.append(item_id)
+                elif item_type == "episode":
+                    logging.info(f"Playlist track with Id {item_id} seems to be an podcast episode => adding to episode to process later")
+                    show_episodes.append(item_id)
+                else:
+                    logging.warning(f"Skipping playlist item '{item_uri}' => unsupported type '{item_type}'")
 
         if show_id is not None:
-            show_episodes = get_show_episodes(spotifySession,show_id)
+            show_episodes.extend(get_show_episodes(spotifySession,show_id))
 
         if (playlist_songs is not None):
 
-            for song in playlist_songs:
+            for track_id in playlist_songs:
 
                 file_fullpath = ""
                 download_tempfile = tempfile.NamedTemporaryFile(delete=False)
 
                 try:
 
-                    track_id = song['track']['id']
+                    (artists, album_name, name, image_url, release_year, disc_number,track_number, is_playable, duration_ms) = get_song_info(spotifySession,track_id)
+                    logging.info(f"Processing {name} (Id: {track_id})")
 
-                    if song['track']['type'] == "episode":
-                        logging.info(f"Playlist track wit Id {track_id} seems to be an podcast episode => adding to episode to process later")
-                        show_episodes.append(track_id)
-                    else:
+                    title = f"{artists[0]} - {name}"
+                    clean_title = trim_to_128(fix_filename(title))
+                    filename = f"{clean_title}.mp3"
+                    file_fullpath = os.path.join(download_root,filename)
 
-                        logging.info(f"Processing {song['track']['name']} (Id: {track_id})")
-                        (artists, raw_artists, album_name, name, image_url, release_year, disc_number,track_number, scraped_song_id, is_playable, duration_ms) = get_song_info(spotifySession,track_id)
-
-                        title = f"{artists[0]} - {name}"
-                        clean_title = trim_to_128(fix_filename(title))
-                        filename = f"{clean_title}.mp3"
-                        file_fullpath = os.path.join(download_root,filename)
-
-                        if not os.path.isfile(file_fullpath):
-                            if(is_playable):
-                                track = TrackId.from_base62(track_id)
-                                downloadSpotifyTrack(spotifySession,clean_title,track,duration_ms,download_tempfile,file_fullpath)
-                                logging.info("Finalizing file...")
-                                convert_audio_format(download_tempfile.name,file_fullpath)
-                                if os.path.isfile(file_fullpath):
-                                    logging.info("Done!")
-                                    logging.info("Setting track metadata...")
-                                    set_audio_tags(file_fullpath, artists, name, album_name, release_year, disc_number, track_number)
+                    if not os.path.isfile(file_fullpath):
+                        if(is_playable):
+                            track = TrackId.from_base62(track_id)
+                            downloadSpotifyTrack(spotifySession,clean_title,track,duration_ms,download_tempfile,file_fullpath)
+                            logging.info("Finalizing file...")
+                            convert_audio_format(download_tempfile.name,file_fullpath)
+                            if os.path.isfile(file_fullpath):
+                                logging.info("Done!")
+                                logging.info("Setting track metadata...")
+                                set_audio_tags(file_fullpath, artists, name, album_name, release_year, disc_number, track_number)
+                                if image_url:
                                     set_music_thumbnail(file_fullpath,image_url)
-                                    logging.info("Done!")
+                                logging.info("Done!")
 
-                                    download_titles[clean_title] = file_fullpath
-                                    download_title_lenghts[clean_title] = (duration_ms / 1000)
-                                else:
-                                    logging.error("Failed to finalize (convert) file!")
+                                download_titles[clean_title] = file_fullpath
+                                download_title_lenghts[clean_title] = (duration_ms / 1000)
                             else:
-                                logging.warning(f"'{filename}' is not playable => Skipping!")
+                                logging.error("Failed to finalize (convert) file!")
                         else:
-                            logging.info(f"Skipping '{filename}' => already exists")
+                            logging.warning(f"'{filename}' is not playable => Skipping!")
+                    else:
+                        logging.info(f"Skipping '{filename}' => already exists")
 
-                            download_titles[clean_title] = file_fullpath
-                            download_title_lenghts[clean_title] = (duration_ms / 1000)
+                        download_titles[clean_title] = file_fullpath
+                        download_title_lenghts[clean_title] = (duration_ms / 1000)
 
                 except Exception as ex:
-                    logging.error(f"Failed to download song {song['track']['name']}")
+                    failed_items += 1
+                    logging.error(f"Failed to download song with Id {track_id}")
                     logging.critical(ex, exc_info=True)
                 finally:
                     download_tempfile.close()
@@ -514,33 +359,24 @@ def main():
                     logging.info(f"Processing episode with id {episode}")
                     podcast_name, duration_ms, episode_name = get_episode_info(spotifySession, episode)
                     title = f"{podcast_name} - {episode_name}"
-                    resp = invoke_url(spotifySession, 'https://api-partner.spotify.com/pathfinder/v1/query?operationName=getEpisode&variables={"uri":"spotify:episode:' + episode + '"}&extensions={"persistedQuery":{"version":1,"sha256Hash":"224ba0fd89fcfdfb3a15fa2d82a6112d3f4e2ac88fba5c6713de04d1b72cf482"}}')[1]["data"]["episode"]
-
-                    if (len(resp["audio"]["items"]) > 0):
-                        direct_download_url = resp["audio"]["items"][-1]["url"]
-                    else:
-                        logging.warning("No direct download url found")
-                        direct_download_url = ""
 
                     clean_title = trim_to_128(fix_filename(title))
                     filename = f"{clean_title}.mp3"
                     file_fullpath = os.path.join(download_root,filename)
 
                     if not os.path.isfile(file_fullpath):
-                        if "anon-podcast.scdn.co" in direct_download_url or "audio_preview_url" not in resp:
-                            track = EpisodeId.from_base62(episode)
-                            downloadSpotifyTrack(spotifySession,clean_title,track,duration_ms,download_tempfile,file_fullpath)
-                            logging.info("Finalizing file...")
-                            convert_audio_format(download_tempfile.name,file_fullpath)
-                            if os.path.isfile(file_fullpath):
+                        # librespot also handles externally hosted episodes
+                        track = EpisodeId.from_base62(episode)
+                        downloadSpotifyTrack(spotifySession,clean_title,track,duration_ms,download_tempfile,file_fullpath)
+                        logging.info("Finalizing file...")
+                        convert_audio_format(download_tempfile.name,file_fullpath)
+                        if os.path.isfile(file_fullpath):
 
-                                logging.info("Done!")
-                                download_titles[clean_title] = file_fullpath
-                                download_title_lenghts[clean_title] = (duration_ms / 1000)
-                            else:
-                                logging.error("Failed to finalize (convert) file!")
+                            logging.info("Done!")
+                            download_titles[clean_title] = file_fullpath
+                            download_title_lenghts[clean_title] = (duration_ms / 1000)
                         else:
-                            download_podcast_directly(direct_download_url, file_fullpath)
+                            logging.error("Failed to finalize (convert) file!")
                     else:
                         logging.info(f"Skipping '{filename}' => already exists")
 
@@ -548,7 +384,8 @@ def main():
                         download_title_lenghts[clean_title] = (duration_ms / 1000)
 
                 except Exception as ex:
-                    logging.error(f"Failed to download episode {episode_name}")
+                    failed_items += 1
+                    logging.error(f"Failed to download episode with id {episode}")
                     logging.critical(ex, exc_info=True)
                 finally:
                     download_tempfile.close()
@@ -556,17 +393,30 @@ def main():
                         os.unlink(download_tempfile.name)
             logging.info("Show download completed!")
 
-        logging.info("Removing orphaned chapters from creative tonie...")
-        chapters_removed = False
+        # Login to tonies after the downloads, the tonie token expires after a few minutes and isn't refreshed
+        tonie_api = TonieAPI(args.tonie_username, args.tonie_password, args.tonie_timeout)
+        household = next((x for x in tonie_api.get_households() if x.name == args.tonie_household), None)
+        if household is None:
+            raise ValueError(f"Tonie Household '{args.tonie_household}' not found!")
+        creative_tonie = next((x for x in tonie_api.get_all_creative_tonies_by_household(household) if x.name == args.creative_tonie_name), None)
+        if creative_tonie is None:
+            raise ValueError(f"Creative Tonie '{args.creative_tonie_name}' not found!")
+
         chapters = creative_tonie.chapters
-        for chapter in chapters:
-            foundOnPlaylist = next((x for x in download_titles.keys() if x == chapter.title), None)
-            if foundOnPlaylist is None:
-                logging.info(f"Removing chapter '{chapter.title}' from creative tonie cause its not longer on the playlist")
-                chapters.remove(chapter)
-                chapters_removed = True
-        if chapters_removed:
-            tonie_api.sort_chapter_of_tonie(creative_tonie,chapters)
+        # Failed items might still be on the playlist (e.g. spotify rate limits) => only remove chapters after a complete run
+        if failed_items > 0:
+            logging.warning(f"Failed to process {failed_items} playlist / show items => not removing any chapters from creative tonie")
+        else:
+            logging.info("Removing orphaned chapters from creative tonie...")
+            chapters_removed = False
+            for chapter in chapters:
+                foundOnPlaylist = next((x for x in download_titles.keys() if x == chapter.title), None)
+                if foundOnPlaylist is None:
+                    logging.info(f"Removing chapter '{chapter.title}' from creative tonie cause its not longer on the playlist")
+                    chapters.remove(chapter)
+                    chapters_removed = True
+            if chapters_removed:
+                tonie_api.sort_chapter_of_tonie(creative_tonie,chapters)
 
         # Refresh tonie
         creative_tonie = next((x for x in tonie_api.get_all_creative_tonies_by_household(household) if x.name == args.creative_tonie_name), None)

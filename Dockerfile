@@ -12,8 +12,6 @@ RUN pip install --prefix="/install" -r /requirements.txt
 FROM base
 LABEL org.opencontainers.image.authors="seji@tihoda.de"
 
-ENV SPOTIFY_USERNAME=
-ENV SPOTIFY_PASSWORD=
 ENV TONIE_USERNAME=
 ENV TONIE_PASSWORD=
 ENV TONIE_HOUSEHOLD=
@@ -32,6 +30,9 @@ COPY entrypoint.sh .
 COPY crontab .
 
 RUN chmod +x /app/entrypoint.sh
+
+# Callback port for the spotify OAuth login
+EXPOSE 4381
 
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["/bin/bash", "/app/entrypoint.sh"]
