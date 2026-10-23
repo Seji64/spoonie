@@ -402,21 +402,21 @@ def main():
                         os.unlink(download_tempfile.name)
             logging.info("Show download completed!")
 
-        # Don't wipe the creative tonie if spotify failed for every item (e.g. API changes)
-        if failed_items > 0 and not download_titles:
-            raise ValueError(f"Failed to process all {failed_items} playlist / show items => leaving creative tonie untouched")
-
-        logging.info("Removing orphaned chapters from creative tonie...")
-        chapters_removed = False
         chapters = creative_tonie.chapters
-        for chapter in chapters:
-            foundOnPlaylist = next((x for x in download_titles.keys() if x == chapter.title), None)
-            if foundOnPlaylist is None:
-                logging.info(f"Removing chapter '{chapter.title}' from creative tonie cause its not longer on the playlist")
-                chapters.remove(chapter)
-                chapters_removed = True
-        if chapters_removed:
-            tonie_api.sort_chapter_of_tonie(creative_tonie,chapters)
+        # Failed items might still be on the playlist (e.g. spotify rate limits) => only remove chapters after a complete run
+        if failed_items > 0:
+            logging.warning(f"Failed to process {failed_items} playlist / show items => not removing any chapters from creative tonie")
+        else:
+            logging.info("Removing orphaned chapters from creative tonie...")
+            chapters_removed = False
+            for chapter in chapters:
+                foundOnPlaylist = next((x for x in download_titles.keys() if x == chapter.title), None)
+                if foundOnPlaylist is None:
+                    logging.info(f"Removing chapter '{chapter.title}' from creative tonie cause its not longer on the playlist")
+                    chapters.remove(chapter)
+                    chapters_removed = True
+            if chapters_removed:
+                tonie_api.sort_chapter_of_tonie(creative_tonie,chapters)
 
         # Refresh tonie
         creative_tonie = next((x for x in tonie_api.get_all_creative_tonies_by_household(household) if x.name == args.creative_tonie_name), None)
