@@ -20,7 +20,7 @@ from librespot.metadata import TrackId, EpisodeId, PlaylistId, ShowId
 from tonie_api.api import TonieAPI
 from tonie_api.models import Config, CreativeTonie, User
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, BooleanOptionalAction
 
 IMAGE_URL_PREFIX = 'https://i.scdn.co/image/'
 OAUTH_REDIRECT_URL = 'http://127.0.0.1:4381/login'
@@ -38,7 +38,7 @@ parser.add_argument("-ctn", "--creative-tonie", dest="creative_tonie_name", requ
 parser.add_argument("-tt", "--tonie-timeout", default=30,type=int, dest="tonie_timeout", required=False, help="Set timeout for tonieapi (which is quite slow sometimes)")
 parser.add_argument("-P", "--playlist", dest="playlist", required=True, help="Link of a Spotify playlist or a show/podcast")
 parser.add_argument("-d", "--data-path", dest="data_path", required=False, help="Defaults to ~/.local/share/spoonie")
-parser.add_argument("-b", "--ban-protection", action="store_true", dest="ban_protection", required=False, help="Ban protection")
+parser.add_argument("-b", "--ban-protection", action=BooleanOptionalAction, default=True, dest="ban_protection", required=False, help="Throttle downloads to avoid spotify rate limits (audio key errors)")
 
 args = parser.parse_args()
 
