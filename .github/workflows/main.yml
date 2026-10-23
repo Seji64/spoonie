@@ -26,11 +26,17 @@ env:
   # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}
 
+# A newer run for the same ref replaces a still running (or hanging) one
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
 
     runs-on: ubuntu-latest
+    # Don't let a stuck build block the runner for the default 6 hours
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
