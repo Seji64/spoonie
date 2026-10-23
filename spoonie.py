@@ -260,16 +260,7 @@ def main():
             logging.info(f"Creating data folder {args.data_path}")
             os.makedirs(args.data_path)
 
-        # Login to spotify first, as the OAuth login may wait for the user
         spotifySession = spotify_login()
-
-        tonie_api = TonieAPI(args.tonie_username, args.tonie_password, args.tonie_timeout)
-        household = next((x for x in tonie_api.get_households() if x.name == args.tonie_household), None)
-        if household is None:
-            raise ValueError(f"Tonie Household '{args.tonie_household}' not found!")
-        creative_tonie = next((x for x in tonie_api.get_all_creative_tonies_by_household(household) if x.name == args.creative_tonie_name), None)
-        if creative_tonie is None:
-            raise ValueError(f"Creative Tonie '{args.creative_tonie_name}' not found!")
 
         playlist_id, show_id = regex_input_for_urls(args.playlist)
 
@@ -401,6 +392,15 @@ def main():
                     if os.path.exists(download_tempfile.name):
                         os.unlink(download_tempfile.name)
             logging.info("Show download completed!")
+
+        # Login to tonies after the downloads, the tonie token expires after a few minutes and isn't refreshed
+        tonie_api = TonieAPI(args.tonie_username, args.tonie_password, args.tonie_timeout)
+        household = next((x for x in tonie_api.get_households() if x.name == args.tonie_household), None)
+        if household is None:
+            raise ValueError(f"Tonie Household '{args.tonie_household}' not found!")
+        creative_tonie = next((x for x in tonie_api.get_all_creative_tonies_by_household(household) if x.name == args.creative_tonie_name), None)
+        if creative_tonie is None:
+            raise ValueError(f"Creative Tonie '{args.creative_tonie_name}' not found!")
 
         chapters = creative_tonie.chapters
         # Failed items might still be on the playlist (e.g. spotify rate limits) => only remove chapters after a complete run
